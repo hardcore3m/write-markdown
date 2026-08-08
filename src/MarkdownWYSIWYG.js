@@ -1,0 +1,226 @@
+// src/MarkdownWYSIWYG.js
+/**
+ * Main editor class that composes utilities and managers.
+ * Exposes a thin public API: constructor(hostId, options), setValue, getValue, switchToMode, destroy
+ */
+import DOMBuilder from './DOMBuilder.js';
+import DOMUtils from './utils/DomUtils.js';
+import UndoManager from './UndoManager.js';
+import MarkdownConverter from './MarkdownConverter.js';
+import DialogManager from './DialogManager.js';
+import TableManager from './TableManager.js';
+
+export default class MarkdownWYSIWYG {
+    /**
+     * @param {string} elementId
+     * @param {Object} options
+     */
+    constructor(elementId, options = {}) {
+        this.host = document.getElementById(elementId);
+        if (!this.host) throw new Error(`Host element ${elementId} not found`);
+        this.options = Object.assign({ initialValue: '', showToolbar: true, initialMode: 'wysiwyg' }, options);
+        this.undoManager = new UndoManager(50);
+        this.converter = new MarkdownConverter();
+        this.currentMode = this.options.initialMode;
+        this.isUpdatingFromUndoRedo = false;
+        this.savedRange = null;
+
+        // build DOM
+        const built = DOMBuilder.build(this.host);
+        this.wrapper = built.wrapper; this.toolbar = built.toolbar; this.editableArea = built.editableArea; this.markdownArea = built.markdownArea; this.markdownContainer = built.markdownContainer; this.lineNumbers = built.lineNumbers; this.wysiwygTab = built.wysiwygTab; this.markdownTab = built.markdownTab; this.previewTab = built.previewTab; this.previewPane = built.previewPane; this.headingMenu = built.headingMenu; this.contextualTableToolbar = built.contextualTableToolbar;
+
+        // toolbar buttons (icons abbreviated)
+        this.buttons = [
+            { id: 'heading', label: 'H', title: 'Headings', action: '_toggleHeadingMenu' },
+            { id: 'separator' },
+            { id: 'bold', label: 'B', title: 'Bold', execCommand: 'bold', type: 'inline', mdPrefix: '**', mdSuffix: '**' },
+            { id: 'italic', label: 'I', title: 'Italic', execCommand: 'italic', type: 'inline', mdPrefix: '*', mdSuffix: '*' },
+            { id: 'separator' },
+            { id: 'link', label: '🔗', title: 'Link', action: '_insertLink' },
+            { id: 'inlinecode', label: '`', title: 'Inline Code', action: '_insertInlineCode', mdPrefix: '`', mdSuffix: '`' },
+            { id: 'codeblock', label: '</>', title: 'Code Block', action: '_insertCodeBlock', mdPrefix: '``\n', mdSuffix: '\n```' },
+            { id: 'separator' },
+            { id: 'ul', label: '•', title: 'Unordered List', execCommand: 'insertUnorderedList', mdPrefix: '- ' },
+            { id: 'ol', label: '1.', title: 'Ordered List', execCommand: 'insertOrderedList', mdPrefix: '1. ' },
+            { id: 'indent', label: '→', title: 'Indent', action: '_handleIndent' },
+            { id: 'outdent', label: '←', title: 'Outdent', action: '_handleOutdent' },
+            { id: 'separator' },
+            { id: 'blockquote', label: '❝', title: 'Blockquote', mdPrefix: '> ' },
+            { id: 'hr', label: '—', title: 'Horizontal Rule', action: '_insertHorizontalRule' },
+            { id: 'separator' },
+            { id: 'image', label: '🖼', title: 'Insert Image', action: '_insertImage' },
+            { id: 'table', label: '▦', title: 'Insert Table', action: '_insertTable' }
+        ];
+
+        DOMBuilder.populateToolbar(this.toolbar, this.buttons, (cfg, btn) => this._handleToolbarClick(cfg, btn));
+        DOMBuilder.buildHeadingMenu(this.headingMenu, (level) => this.applyHeading(level));
+
+        this._bindEvents();
+
+        this.setValue(this.options.initialValue || '', true);
+        const seed = (this.currentMode === 'wysiwyg') ? this.editableArea.innerHTML : this.markdownArea.value;
+        this.undoManager.reset(seed);
+    }
+
+    _bindEvents() {
+        document.addEventListener('selectionchange', () => this._updateToolbarState());
+        this.editableArea.addEventListener('input', (e) => this._onEditableInput(e));
+        this.editableArea.addEventListener('keydown', (e) => this._onEditableKeyDown(e));
+        this.editableArea.addEventListener('click', (e) => this._onEditableClick(e));
+        this.markdownArea.addEventListener('input', (e) => this._onMarkdownInput(e));
+        this.markdownArea.addEventListener('keydown', (e) => this._onMarkdownKeyDown(e));
+        this.markdownArea.addEventListener('scroll', () => this._syncLineNumbers());
+        this.wysiwygTab.addEventListener('click', () => this.switchToMode('wysiwyg'));
+        this.markdownTab.addEventListener('click', () => this.switchToMode('markdown'));
+        this.previewTab.addEventListener('click', () => this.switchToMode('preview'));
+    }
+
+    _onEditableInput() {
+        if (!this.isUpdatingFromUndoRedo) this.undoManager.push(this.editableArea.innerHTML);
+        if (this.options.onUpdate) this.options.onUpdate(this.getValue());
+        this._updatePreview();
+    }
+
+    _onMarkdownInput() {
+        if (!this.isUpdatingFromUndoRedo) this.undoManager.push(this.markdownArea.value);
+        this._updateLineNumbers();
+        if (this.options.onUpdate) this.options.onUpdate(this.getValue());
+        this._updatePreview();
+    }
+
+    _onEditableKeyDown(e) {
+        if (e.key === 'Tab') { e.preventDefault(); document.execCommand('insertText', false, '    '); }
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); this.undo(); }
+        if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === 'y' || (e.shiftKey && e.key.toLowerCase() === 'z'))) { e.preventDefault(); this.redo(); }
+    }
+
+    _onMarkdownKeyDown(e) {
+        if (e.key === 'Tab') { e.preventDefault(); document.execCommand('insertText', false, '    '); }
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); this.undo(); }
+        if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === 'y' || (e.shiftKey && e.key.toLowerCase() === 'z'))) { e.preventDefault(); this.redo(); }
+    }
+
+    _onEditableClick(e) {
+        const cell = DOMUtils.findParent(e.target, ['TD', 'TH']);
+        if (cell) { this.currentTableSelection = { cell, row: DOMUtils.findParent(cell, 'TR'), table: DOMUtils.findParent(cell, 'TABLE') }; this._showContextualTableToolbar(cell); }
+        else { this._hideContextualTableToolbar(); }
+    }
+
+    _handleToolbarClick(cfg) {
+        if (cfg.action && typeof this[cfg.action] === 'function') { this[cfg.action](); return; }
+        if (this.currentMode === 'wysiwyg') {
+            if (cfg.execCommand) { document.execCommand(cfg.execCommand, false, cfg.value || null); this._finalizeUpdate(this.editableArea.innerHTML); }
+        } else if (this.currentMode === 'markdown') {
+            // simple markdown wrapper behaviour
+            this._applyMarkdownFormatting(cfg);
+        }
+    }
+
+    _toggleHeadingMenu() { this.headingMenu.style.display = (this.headingMenu.style.display === 'block') ? 'none' : 'block'; }
+
+    applyHeading(level) {
+        const tag = level > 0 ? `H${level}` : 'P';
+        if (this.currentMode === 'wysiwyg') {
+            document.execCommand('formatBlock', false, tag);
+            this._finalizeUpdate(this.editableArea.innerHTML);
+        } else {
+            const ta = this.markdownArea; const v = ta.value; const start = ta.selectionStart; const lineStart = v.lastIndexOf('\n', start - 1) + 1; const lineEnd = v.indexOf('\n', lineStart); const current = v.substring(lineStart, lineEnd === -1 ? v.length : lineEnd);
+            const mdPrefix = level > 0 ? `${'#'.repeat(level)} ` : '';
+            const existing = current.match(/^(#+\s)/);
+            let newLine = existing ? (mdPrefix ? mdPrefix + current.substring(existing[1].length) : current.substring(existing[1].length)) : mdPrefix + current;
+            ta.value = v.substring(0, lineStart) + newLine + v.substring(lineEnd === -1 ? v.length : lineEnd);
+            this._finalizeUpdate(ta.value);
+        }
+    }
+
+    async _insertImage() {
+        if (this.currentMode === 'wysiwyg') {
+            const sel = window.getSelection(); if (sel.rangeCount > 0) this.savedRange = sel.getRangeAt(0).cloneRange();
+        } else { this.savedRange = { start: this.markdownArea.selectionStart, end: this.markdownArea.selectionEnd }; }
+        const data = await DialogManager.showFormDialog('Insert Image', [{ label: 'Image URL', name: 'url', type: 'url', required: true }, { label: 'Alt text', name: 'alt', type: 'text' }], this.wrapper);
+        if (!data) return;
+        this._performInsertImage(data.url, data.alt || '');
+    }
+
+    _performInsertImage(url, alt) {
+        if (this.currentMode === 'wysiwyg') {
+            this.editableArea.focus(); let range; const sel = window.getSelection(); if (this.savedRange instanceof Range && this.editableArea.contains(this.savedRange.commonAncestorContainer)) range = this.savedRange; else if (sel.rangeCount > 0 && this.editableArea.contains(sel.getRangeAt(0).commonAncestorContainer)) range = sel.getRangeAt(0); else { range = document.createRange(); range.selectNodeContents(this.editableArea); range.collapse(false); }
+            sel.removeAllRanges(); sel.addRange(range);
+            const img = document.createElement('img'); img.src = url; img.alt = alt; range.deleteContents(); const frag = document.createDocumentFragment(); frag.appendChild(img); const pAfter = document.createElement('p'); pAfter.innerHTML = '&#8203;'; frag.appendChild(pAfter); range.insertNode(frag);
+            const newRange = document.createRange(); newRange.setStart(pAfter, 0); newRange.collapse(true); sel.removeAllRanges(); sel.addRange(newRange);
+            this._finalizeUpdate(this.editableArea.innerHTML);
+        } else {
+            const ta = this.markdownArea; const start = this.savedRange && typeof this.savedRange.start === 'number' ? this.savedRange.start : ta.selectionStart; const end = this.savedRange && typeof this.savedRange.end === 'number' ? this.savedRange.end : ta.selectionEnd; const md = `![${alt}](${url})`;
+            const v = ta.value; const prefix = (start > 0 && v[start - 1] !== '\n') ? '\n\n' : ''; const suffix = (end < v.length && v[end] !== '\n') ? '\n\n' : '\n'; const text = prefix + md + suffix; ta.value = v.substring(0, start) + text + v.substring(end); ta.setSelectionRange(start + prefix.length, start + prefix.length + md.length); this._finalizeUpdate(ta.value);
+        }
+        this.savedRange = null; this._updatePreview();
+    }
+
+    _insertTable() {
+        const rowsStr = prompt('Rows (1-10)', '2'); if (!rowsStr) return; const colsStr = prompt('Cols (1-10)', '3'); if (!colsStr) return; const rows = parseInt(rowsStr, 10); const cols = parseInt(colsStr, 10);
+        if (this.currentMode === 'wysiwyg') {
+            this.editableArea.focus(); const sel = window.getSelection(); let range = document.createRange(); if (sel && sel.rangeCount > 0 && this.editableArea.contains(sel.getRangeAt(0).commonAncestorContainer)) range = sel.getRangeAt(0); else { range.selectNodeContents(this.editableArea); range.collapse(false); }
+            TableManager.insertTableWysiwyg(this.editableArea, range, rows, cols); this._finalizeUpdate(this.editableArea.innerHTML);
+        } else { TableManager.insertTableMarkdown(this.markdownArea, rows, cols, this.savedRange); }
+        this._updatePreview();
+    }
+
+    _insertCodeBlock() { if (this.currentMode === 'wysiwyg') { /* ...similar to previous implementation*/ this._finalizeUpdate(this.editableArea.innerHTML); } else { this._applyMarkdownFormatting({ id: 'codeblock' }); } }
+    _insertInlineCode() { if (this.currentMode === 'wysiwyg') { /* ... */ this._finalizeUpdate(this.editableArea.innerHTML); } else this._applyMarkdownFormatting({ id: 'inlinecode' }); }
+    _insertHorizontalRule() { if (this.currentMode === 'wysiwyg') { document.execCommand('insertHorizontalRule'); this._finalizeUpdate(this.editableArea.innerHTML); } else { const ta = this.markdownArea; const start = ta.selectionStart; const prefix = (start > 0 && ta.value[start - 1] !== '\n') ? '\n\n' : ''; const rep = `${prefix}---\n\n`; ta.value = ta.value.substring(0, start) + rep + ta.value.substring(ta.selectionEnd); ta.selectionStart = ta.selectionEnd = start + rep.length - 1; this._finalizeUpdate(ta.value); } }
+
+    _insertLink() { if (this.currentMode === 'wysiwyg') { const url = prompt('Enter URL', 'https://'); if (!url) return; document.execCommand('createLink', false, url); this._finalizeUpdate(this.editableArea.innerHTML); } else { this._applyMarkdownFormatting({ id: 'link' }); } }
+
+    _handleIndent() { if (this.currentMode === 'wysiwyg') { document.execCommand('indent'); this._finalizeUpdate(this.editableArea.innerHTML); } }
+    _handleOutdent() { if (this.currentMode === 'wysiwyg') { document.execCommand('outdent'); this._finalizeUpdate(this.editableArea.innerHTML); } }
+
+    _applyMarkdownFormatting(cfg) {
+        const ta = this.markdownArea; const v = ta.value; const start = ta.selectionStart; const end = ta.selectionEnd; const sel = v.substring(start, end);
+        if (!cfg) return;
+        const id = cfg.id;
+        switch (id) {
+            case 'bold': { const wrap = `**${sel || 'bold text'}**`; ta.value = v.substring(0, start) + wrap + v.substring(end); ta.setSelectionRange(start + 2, start + 2 + (sel ? sel.length : 9)); break; }
+            case 'italic': { const wrap = `*${sel || 'italic text'}*`; ta.value = v.substring(0, start) + wrap + v.substring(end); ta.setSelectionRange(start + 1, start + 1 + (sel ? sel.length : 11)); break; }
+            case 'link': { const url = prompt('Enter link URL', 'https://'); if (!url) return; const text = sel || 'link text'; const md = `[${text}](${url})`; ta.value = v.substring(0, start) + md + v.substring(end); ta.setSelectionRange(start + 1, start + 1 + text.length); break; }
+            case 'codeblock': { const code = sel || 'code'; const before = (start > 0 && v[start - 1] !== '\n') ? '\n' : ''; const wrapped = `${before}\`\`\`\n${code}\n\`\`\`\n`; ta.value = v.substring(0, start) + wrapped + v.substring(end); ta.setSelectionRange(start + before.length + 4, start + before.length + 4 + code.length); break; }
+            default: { /* fallback: insert prefix */ if (cfg.mdPrefix) { const prefix = cfg.mdPrefix; const text = sel || (cfg.id === 'ul' || cfg.id === 'ol' ? 'List item' : ''); const insert = prefix + text; ta.value = v.substring(0, start) + insert + v.substring(end); ta.setSelectionRange(start + prefix.length, start + prefix.length + text.length); } }
+        }
+        ta.focus(); this._finalizeUpdate(ta.value); this._updatePreview();
+    }
+
+    _finalizeUpdate(content) { if (!this.isUpdatingFromUndoRedo && content !== undefined) this.undoManager.push(content); if (this.options.onUpdate) this.options.onUpdate(this.getValue()); }
+
+    undo() { const r = this.undoManager.undo(); if (r !== null) { this.isUpdatingFromUndoRedo = true; if (this.currentMode === 'wysiwyg') this.editableArea.innerHTML = r; else this.markdownArea.value = r; this.isUpdatingFromUndoRedo = false; this._updatePreview(); } }
+    redo() { const r = this.undoManager.redo(); if (r !== null) { this.isUpdatingFromUndoRedo = true; if (this.currentMode === 'wysiwyg') this.editableArea.innerHTML = r; else this.markdownArea.value = r; this.isUpdatingFromUndoRedo = false; this._updatePreview(); } }
+
+    switchToMode(mode) {
+        if (this.currentMode === mode) return;
+        const prev = (this.currentMode === 'wysiwyg') ? this.editableArea.innerHTML : this.markdownArea.value;
+        this.currentMode = mode;
+        if (mode === 'wysiwyg') { this.editableArea.innerHTML = this.converter.toHtml(this.markdownArea.value); this.editableArea.style.display = 'block'; this.markdownContainer.style.display = 'none'; this.previewPane.style.display = 'none'; this.wysiwygTab.classList.add('active'); this.markdownTab.classList.remove('active'); this.previewTab.classList.remove('active'); }
+        else if (mode === 'markdown') { this.markdownArea.value = this.converter.toMarkdown(this.editableArea); this.editableArea.style.display = 'none'; this.markdownContainer.style.display = 'flex'; this.previewPane.style.display = 'none'; this.markdownTab.classList.add('active'); this.wysiwygTab.classList.remove('active'); this.previewTab.classList.remove('active'); this._updateLineNumbers(); }
+        else if (mode === 'preview') { // preview shows HTML of markdown
+            const html = this.converter.toHtml(this.markdownArea.value || this.converter.toMarkdown(this.editableArea));
+            this.previewPane.innerHTML = html; this.previewPane.style.display = 'block'; this.editableArea.style.display = 'none'; this.markdownContainer.style.display = 'none'; this.previewTab.classList.add('active'); this.wysiwygTab.classList.remove('active'); this.markdownTab.classList.remove('active');
+        }
+        const current = (this.currentMode === 'wysiwyg') ? this.editableArea.innerHTML : this.markdownArea.value;
+        if (prev !== current) this.undoManager.reset(current);
+        this._updatePreview();
+    }
+
+    _updateLineNumbers() { if (!this.lineNumbers) return; const lines = this.markdownArea.value.split('\n').length || 1; let html = ''; for (let i = 1; i <= lines; i++) html += `<div>${i}</div>`; this.lineNumbers.innerHTML = html; this._syncLineNumbers(); }
+    _syncLineNumbers() { if (!this.lineNumbers) return; this.lineNumbers.scrollTop = this.markdownArea.scrollTop; }
+
+    _updateToolbarState() { /* simplified toolbar state update */ }
+
+    _updatePreview() { try { const html = this.converter.toHtml(this.markdownArea.value || this.converter.toMarkdown(this.editableArea)); this.previewPane.innerHTML = html; } catch (err) { this.previewPane.textContent = 'Preview unavailable'; } }
+
+    setValue(markdown, initial = false) { const html = this.converter.toHtml(markdown || ''); this.editableArea.innerHTML = html; this.markdownArea.value = markdown || ''; if (this.currentMode === 'markdown') this._updateLineNumbers(); if (!this.isUpdatingFromUndoRedo && !initial) this.undoManager.push(this.currentMode === 'wysiwyg' ? this.editableArea.innerHTML : this.markdownArea.value); else if (initial) this.undoManager.reset(this.currentMode === 'wysiwyg' ? this.editableArea.innerHTML : this.markdownArea.value); this._updatePreview(); }
+
+    getValue() { if (this.currentMode === 'markdown') return this.markdownArea.value; return this.converter.toMarkdown(this.editableArea); }
+
+    _showContextualTableToolbar() { /* left minimal */ }
+    _hideContextualTableToolbar() { /* left minimal */ }
+
+    destroy() { document.removeEventListener('selectionchange', () => this._updateToolbarState()); if (this.host) this.host.innerHTML = ''; this.host = null; }
+}
