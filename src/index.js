@@ -2,8 +2,8 @@
 /**
  * Library entrypoint
  * Example:
- * import MarkdownWYSIWYG from './src/index.js';
- * const ed = new MarkdownWYSIWYG('editor-host', { initialValue: '# Hello' });
+ * import MarkdownWriter from './src/index.js';
+ * const ed = new MarkdownWriter('editor-host', { initialValue: '# Hello' });
  */
-import MarkdownWYSIWYG from './MarkdownWYSIWYG.js';
-export default MarkdownWYSIWYG;
+import MarkdownWriter from './markdownWriter.js';
+export default MarkdownWriter;
