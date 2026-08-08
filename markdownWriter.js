@@ -1,4 +1,4 @@
-// src/MarkdownWYSIWYG.js
+// src/markdownWriter.js
 /**
  * Main editor class that composes utilities and managers.
  * Exposes a thin public API: constructor(hostId, options), setValue, getValue, switchToMode, destroy
@@ -10,7 +10,7 @@ import MarkdownConverter from './MarkdownConverter.js';
 import DialogManager from './DialogManager.js';
 import TableManager from './TableManager.js';
 
-export default class MarkdownWYSIWYG {
+export default class MarkdownWriter {
     /**
      * @param {string} elementId
      * @param {Object} options
