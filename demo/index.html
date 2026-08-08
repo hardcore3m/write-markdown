@@ -1,0 +1,30 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>write-markdown demo (refactor)</title>
+  <style>
+    body { font-family: system-ui, Arial; margin: 20px; }
+    #editor-host { border: 1px solid #ddd; padding: 8px; min-height: 200px; }
+  </style>
+</head>
+<body>
+  <h1>write-markdown demo (refactor)</h1>
+  <p>Build the bundle first: <code>npx rollup -c</code>. Then open this demo and include the generated UMD bundle and peer libs.</p>
+
+  <div id="editor-host"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/turndown/dist/turndown.js"></script>
+  <script src="../dist/write-markdown.umd.js"></script>
+  <script>
+    // UMD exposes WriteMarkdown
+    if (typeof WriteMarkdown !== 'undefined') {
+      const ed = new WriteMarkdown('editor-host', { initialValue: '# Hello from demo' });
+      window.editor = ed;
+    } else {
+      document.getElementById('editor-host').textContent = 'Bundle not found. Run `npx rollup -c` to generate dist/write-markdown.umd.js and reload.';
+    }
+  </script>
+</body>
+</html>

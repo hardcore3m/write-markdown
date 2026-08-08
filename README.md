@@ -1,133 +1,76 @@
+# write-markdown (refactor/modular-editor-marked-preview)
 
-# Markdown WYSIWYG Editor
+This branch contains a refactored, modular implementation of the Write Markdown editor.
+The code has been split into ES modules (src/) and uses `marked` (markdown → HTML) and `turndown` (HTML → markdown) for bidirectional conversion. A Preview tab was also added that renders the HTML output.
 
-A versatile JavaScript-based Markdown editor that offers a seamless experience by allowing users to switch between a What-You-See-Is-What-You-Get (WYSIWYG) visual editor and a raw Markdown text editor. It comes with a customizable toolbar, undo/redo functionality, and intelligent Markdown-to-HTML (and vice-versa) conversion.
+Files added:
 
-![image](https://github.com/user-attachments/assets/26d74f49-9094-4336-a951-71919388145d)
+- src/
+  - index.js
+  - MarkdownWYSIWYG.js
+  - DOMBuilder.js
+  - TableManager.js
+  - DialogManager.js
+  - MarkdownConverter.js
+  - UndoManager.js
+  - utils/DomUtils.js
+- rollup.config.js
+- package.template.json (suggested package.json content — DO NOT overwrite your existing package.json automatically)
+- demo/
+  - index.html (demo placeholder, explained below)
 
-## Features
+Installation and build
 
-- **Dual Editing Modes:**
-  - **WYSIWYG Mode:** Edit rich text visually with familiar formatting tools.
-  - **Markdown Mode:** Directly write and edit Markdown syntax in a textarea.
-- **Easy Mode Switching:** Instantly toggle between WYSIWYG and Markdown views using intuitive tabs.
-- **Comprehensive Toolbar:**
-  - Headings (H1, H2, H3)
-  - Bold, Italic, Strikethrough
-  - Hyperlinks
-  - Unordered and Ordered Lists
-  - Indent and Outdent (for lists)
-  - Blockquotes
-  - Horizontal Rules
-  - Tables (with interactive grid selector)
-  - Code Blocks and Inline Code
-  - SVG icons for a clean and modern look
-- **Smart Conversion:**
-  - Uses Marked.js for Markdown → HTML
-  - Custom-built HTML → Markdown parser
-- **Undo/Redo** support in both modes
-- **Customizable:**
-  - Initial value
-  - Toolbar visibility
-  - Toolbar buttons
-  - Table grid dimensions
-  - `onUpdate` callback
-- **Keyboard Shortcuts:**
-  - `Tab` / `Shift+Tab`: Indent/outdent, table cell nav
-  - `Ctrl+Z` / `Cmd+Z`: Undo
-  - `Ctrl+Y` / `Ctrl+Shift+Z`: Redo
-- **Lightweight and self-contained**
+1. Install peer dependencies and dev dependencies (recommended via project's package.json). Example: 
 
-## Demo
-
-You can run the `index.html` file in your browser to see a live demonstration of the editor.  
-Or online here: [demo](https://celsowm.github.io/markdown-wysiwyg/)
-
-## Installation / Setup
-
-**Include CSS:**
-
-```html
-<link rel="stylesheet" href="dist/editor.css">
+```bash
+npm install marked turndown
+npm install --save-dev rollup @rollup/plugin-node-resolve @rollup/plugin-commonjs rollup-plugin-terser
 ```
 
-**Include JavaScript:**
+2. Build the bundle:
+
+```bash
+npx rollup -c
+```
+
+This will output:
+- dist/write-markdown.esm.js
+- dist/write-markdown.umd.js
+
+Usage (ES Module)
+
+```js
+import MarkdownWYSIWYG from './dist/write-markdown.esm.js';
+const editor = new MarkdownWYSIWYG('editor-host', { initialValue: '# Hello' });
+```
+
+Usage (UMD)
+
+Include the UMD bundle and peer libs (marked, turndown) in your page and use `WriteMarkdown` global:
 
 ```html
-<!-- Dependency: Marked.js -->
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-
-<!-- Editor Script -->
-<script src="dist/editor.js"></script>
-```
-
-**Create an HTML Container:**
-
-```html
-<div id="myMarkdownEditor"></div>
-```
-
-**Initialize via JavaScript:**
-
-```html
+<script src="https://cdn.jsdelivr.net/npm/turndown/dist/turndown.js"></script>
+<script src="dist/write-markdown.umd.js"></script>
 <script>
-document.addEventListener('DOMContentLoaded', () => {
-  const editor = new MarkdownWYSIWYG('myMarkdownEditor', {
-    initialValue: "## Hello World!\n\nThis is **Markdown** content.",
-    onUpdate: (markdownContent) => {
-      console.log("Updated content:", markdownContent);
-    }
-  });
-});
+  const editor = new WriteMarkdown('editor-host', { initialValue: '# Hello' });
 </script>
 ```
 
-## Options
+Demo
 
-| Option             | Type     | Default | Description                              |
-|--------------------|----------|---------|------------------------------------------|
-| initialValue       | string   | ''      | The initial Markdown content to load.    |
-| showToolbar        | boolean  | true    | Whether to display the toolbar.          |
-| buttons            | array    | default | Custom toolbar button list.              |
-| onUpdate           | function | null    | Callback triggered on content change.    |
-| initialMode        | string   | 'wysiwyg' | Starting mode: `'wysiwyg'` or `'markdown'`. |
-| tableGridMaxRows   | number   | 10      | Max rows in the insert table selector grid. |
-| tableGridMaxCols   | number   | 10      | Max columns in the insert table selector grid. |
+There is a simple demo file `demo/index.html` that explains how to run the demo after you build the bundle. Open it after running `npx rollup -c`.
 
-## Public Methods
+Notes and next steps
 
-- `getValue()`: Returns the current Markdown content as string.
-- `setValue(markdownString, isInitialSetup)`: Sets the content of the editor.
-- `switchToMode(mode)`: Switches mode: `'wysiwyg'` or `'markdown'`.
-- `destroy()`: Destroys the editor and cleans up listeners.
+- The conversion uses `marked` and `turndown`. You can customize Turndown rules inside `src/MarkdownConverter.js` if you need more control over HTML → Markdown.
+- The toolbar behavior and markdown active-state detection were simplified to accelerate modularization. If you need exact parity with the old behavior, I can port the original active-state detection into a separate utility.
+- I intentionally created `package.template.json` instead of overwriting your repository's package.json. Merge the suggested fields manually into your package.json (scripts, peerDependencies, devDependencies) if desired.
 
-## CDN Usage
+If you want, I can now:
+1) open a PR with these changes on the branch
+2) create the rollup output (run a build) and commit `dist/` bundles to the branch (not recommended — better to include in releases)
+3) port the original toolbar active-state detection into a standalone util
 
-```html
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/celsowm/markdown-wysiwyg/dist/editor.css" />
-<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-<script src="https://cdn.jsdelivr.net/gh/celsowm/markdown-wysiwyg@latest/dist/editor.js"></script>
-```
-
-## HTML → Markdown Conversion
-
-The `_htmlToMarkdown` function (and helpers) recursively convert HTML from the visual editor into valid Markdown:
-
-- Converts tags like `<b>`, `<em>`, `<h1>`, `<ul>`, `<table>`, `<code>`, etc.
-- Detects code blocks and inline code
-- Properly formats nested lists and blockquotes
-- Escapes special characters (`|`, `_`, etc.)
-- Handles `<th>` vs `<td>` to produce proper Markdown tables
-
-## Contributing
-
-Contributions are welcome!
-
-1. Fork the repo  
-2. Create a feature branch  
-3. Commit and push  
-4. Open a pull request
-
-## License
-
-MIT License. See `LICENSE` file for details.
+Reply which next step you want (1/2/3) or ask for changes.
