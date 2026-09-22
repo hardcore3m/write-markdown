@@ -1,7 +1,5 @@
-/**
- * Handles content conversion and DOM synchronization.
- * It deliberately exposes only content operations, not UI or history concerns.
- */
+import ContentManager from './ContentManager.js';
+
 export default class ContentManager {
     constructor({ editableArea, markdownArea }, converter) {
         this.editableArea = editableArea;
@@ -28,9 +26,8 @@ export default class ContentManager {
     }
 
     setRawHtml(html = '') {
-        const parser = new DOMParser();
-        const document = parser.parseFromString(html, 'text/html');
-        this.setHtml(document.body.innerHTML);
+        const parsed = new DOMParser().parseFromString(html, 'text/html');
+        this.setHtml(parsed.body.innerHTML);
     }
 
     getRawHtml() {

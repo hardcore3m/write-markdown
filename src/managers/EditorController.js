@@ -1,46 +1,54 @@
 import ContentManager from './ContentManager.js';
 import ViewManager from './ViewManager.js';
 
-/**
- * Facade for editor state that coordinates content and visual views.
- * Commands, dialogs and history remain outside this class.
- */
+const MODES = new Set(['wysiwyg', 'markdown', 'preview']);
+
+/** Coordinates independent content and view services without owning DOM construction. */
 export default class EditorController {
-    constructor(editor) {
-        this.editor = editor;
-        this.content = new ContentManager(editor, editor.converter);
-        this.views = new ViewManager(editor, editor.converter);
-        this.mode = editor.currentMode || 'wysiwyg';
+    constructor({ elements, converter, undoManager, initialMode = 'wysiwyg', onUpdate = null }) {
+        this.elements = elements;
+        this.converter = converter;
+        this.undoManager = undoManager;
+        this.onUpdate = onUpdate;
+        this.content = new ContentManager(elements, converter);
+        this.views = new ViewManager(elements, converter);
+        this.mode = MODES.has(initialMode) ? initialMode : 'wysiwyg';
     }
 
-    switchTo(mode) {
-        if (!['wysiwyg', 'markdown', 'preview'].includes(mode)) return;
+    get historyState() {
+        return this.mode === 'wysiwyg'
+            ? this.elements.editableArea.innerHTML
+            : this.elements.markdownArea.value;
+    }
+
+    setMode(mode) {
+        if (!MODES.has(mode)) throw new Error(`Unsupported editor mode: ${mode}`);
         if (mode === 'wysiwyg') this.views.syncHtmlFromMarkdown();
         if (mode === 'markdown') this.views.syncMarkdownFromHtml();
         this.mode = mode;
         this.views.show(mode);
         this.views.updateLineNumbers();
         this.views.updatePreview(this.content.getMarkdown());
-        this.editor.currentMode = mode;
+        return mode;
     }
 
     setMarkdown(markdown, resetHistory = false) {
         this.content.setMarkdown(markdown);
         this.views.updateLineNumbers();
         this.views.updatePreview(markdown);
-        if (resetHistory) this.editor.undoManager.reset(this.historyState());
+        if (resetHistory) this.undoManager.reset(this.historyState);
+        this.notify();
     }
 
     setHtml(html, resetHistory = false) {
         this.content.setHtml(html);
         this.views.updateLineNumbers();
         this.views.updatePreview(this.content.getMarkdown());
-        if (resetHistory) this.editor.undoManager.reset(this.historyState());
+        if (resetHistory) this.undoManager.reset(this.historyState);
+        this.notify();
     }
 
-    historyState() {
-        return this.mode === 'wysiwyg'
-            ? this.editor.editableArea.innerHTML
-            : this.editor.markdownArea.value;
+    notify() {
+        if (this.onUpdate) this.onUpdate(this.content.getMarkdown());
     }
 }

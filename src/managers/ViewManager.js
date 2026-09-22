@@ -1,9 +1,5 @@
 import Tabs from '../components/Tabs.js';
 
-/**
- * Owns visibility and synchronization of the editor's three views.
- * The editor controller supplies conversion and state callbacks.
- */
 export default class ViewManager {
     constructor({ editableArea, markdownArea, markdownContainer, previewPane, lineNumbers, tabButtons }, converter) {
         this.editableArea = editableArea;
@@ -16,12 +12,12 @@ export default class ViewManager {
     }
 
     show(mode) {
-        const visible = {
+        const views = {
             wysiwyg: [this.editableArea, 'block'],
             markdown: [this.markdownContainer, 'flex'],
             preview: [this.previewPane, 'block']
         };
-        Object.entries(visible).forEach(([name, [element, display]]) => {
+        Object.entries(views).forEach(([name, [element, display]]) => {
             element.style.display = name === mode ? display : 'none';
         });
         if (this.tabButtons) Tabs.activate(this.tabButtons, mode);
@@ -41,7 +37,6 @@ export default class ViewManager {
     }
 
     updateLineNumbers() {
-        if (!this.lineNumbers) return;
         const count = Math.max(1, this.markdownArea.value.split('\n').length);
         this.lineNumbers.innerHTML = Array.from(
             { length: count },
@@ -50,6 +45,6 @@ export default class ViewManager {
     }
 
     syncLineNumbersScroll() {
-        if (this.lineNumbers) this.lineNumbers.scrollTop = this.markdownArea.scrollTop;
+        this.lineNumbers.scrollTop = this.markdownArea.scrollTop;
     }
 }
